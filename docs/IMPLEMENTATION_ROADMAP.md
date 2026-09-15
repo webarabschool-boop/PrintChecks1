@@ -109,7 +109,7 @@ state, and remove the noise that would corrupt every later decision.
 | D14 | **Is receipt/invoice functionality retained, dropped, or deferred?** | It is ~2,000 lines across `Receipt`, `ReceiptService`, `receipt-form`, `LineItemManager`, `ReceiptView` and is not part of the stated product definition |
 
 **Conflicts resolved by Phase 0:** documentation drift (M16), CI blindness (H9), cold-checkout
-failure (H10), dead-code inventory (M1–M9, M22).
+failure (H10), dead-code inventory (M1–M9, M22 — inventoried and scheduled, **not** yet deleted).
 **Depends on:** nothing.
 
 ---
@@ -153,6 +153,7 @@ dependencies). It contains four layers:
 | `PhysicalLength` branded type | **DEFERRED (D16)** |
 | Every legal/illegal status transition asserted | **MET** — `lifecycle.test.ts`, table-driven in both directions |
 | Root `pnpm test` works | **MET** — the script was missing entirely; added as `pnpm run build:core && pnpm -r run test`, which also fixes the undeclared build-order failure (H10) |
+| CI actually runs the tests (H9) | **MET** — `.github/workflows/verify.yml` previously stopped after install → build → type-check → lint and ran **zero** tests, so a regression in any of the 1,596 tests could merge green. A `Test` step now runs `pnpm run test`. |
 
 ### Still open after Phase 0
 
