@@ -53,3 +53,8 @@ jobs:
 
       - name: Lint
         run: pnpm run lint
+
+      # CI previously stopped here: it built, type-checked and linted, but never ran a
+      # single test. A regression in any of the 1,596 tests could merge green.
+      - name: Test
+        run: pnpm run test
