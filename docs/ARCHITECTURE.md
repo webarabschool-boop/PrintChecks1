@@ -187,7 +187,7 @@ Cross-cutting:  * AuditEvent      User * ──── * Role
 
 #### Bank
 Reference data for a financial institution. Not currently modelled — `bankName` is a denormalised
-free-text string on `Check` (`models/Check.ts:22`) and `BankAccount` (`models/BankAccount.ts:20`).
+free-text string on `Check` (`models/Check.ts:19`) and `BankAccount` (`models/BankAccount.ts:18`).
 
 ```ts
 interface Bank {
@@ -530,10 +530,10 @@ An incoming cheque's number is captured **exactly as received from the issuing b
 
 | Conflict | Evidence | Severity |
 |---|---|---|
-| Numbering is **global**, not per book | `CheckService.getNextCheckNumber()` (`packages/core/src/services/CheckService.ts:270-283`) does `Math.max(...parseInt)` over **all** cheques in the store | **Critical** |
-| Two independent, disagreeing generators | `CheckService.ts:270` vs `CheckPrinter.vue:1083-1097` | High |
+| Numbering is **global**, not per book | `CheckService.getNextCheckNumber()` (`packages/core/src/services/CheckService.ts:288-304`) — `checkNumber` itself is stored as a plain `string` (`models/Check.ts:24`); the generator coerces it with `parseInt` and takes `Math.max` over **all** cheques in the store | **Critical** |
+| Two independent, disagreeing generators | `CheckService.ts:288` vs `CheckPrinter.vue:1083-1097` | High |
 | No `ChequeBook` entity — nowhere to scope a sequence | §3.1 (0 hits) | **Critical** |
-| `startingCheckNumber` exists only in the app type and is **ignored** by the generator | `types/bankAccount.ts:14`; `CheckPrinter.vue:1083` computes max from history instead | High |
+| `startingCheckNumber` exists only in the app type and is **ignored** by the generator | `types/bankAccount.ts:13`; `CheckPrinter.vue:1083` computes max from history instead | High |
 | No uniqueness enforcement at all | no duplicate-number check in `CheckService.createCheck()` (`:41-73`) | High |
 | `id` is not a UUID and is time-derived | `Date.now().toString(36) + Math.random()...substr(2)` in all four core models (`models/Check.ts:298`); `stores/history.ts:165` uses bare `Date.now().toString()` — collides on rapid inserts | High |
 | No concept of a consumed-but-unused (spoiled) number | — | Medium |
@@ -570,7 +570,7 @@ Rules:
 ### 6.1 Current-state conflicts
 
 - **No `Bank` entity.** `bankName` is a free-text string duplicated on `Check`
-  (`models/Check.ts:22`) and `BankAccount` (`models/BankAccount.ts:20`). Renaming a bank requires
+  (`models/Check.ts:19`) and `BankAccount` (`models/BankAccount.ts:18`). Renaming a bank requires
   updating every cheque.
 - **Bank and account are conflated.** In the app, `BankAccount.name` *is* the bank name
   (`BankAccountModal.vue:20`), while `accountHolderName` is the customer — one entity, two
@@ -1327,7 +1327,7 @@ layer use case at a time; delete legacy code only once nothing references it. Th
 | Money | `models/Check.ts:26` + 62 `parseFloat` sites | `Money` value object, integer minor units |
 | Status | `models/Check.ts:186,197` | Replace mutable field with append-only `ChequeStatusHistory` |
 | ID generation | all four core models (`Check.ts:298` etc.), `stores/history.ts:165` | UUIDv7; remove deprecated `.substr` |
-| `getNextCheckNumber` | `CheckService.ts:270` and `CheckPrinter.vue:1083` | Replace both with `AllocateChequeNumber(chequeBookId)` |
+| `getNextCheckNumber` | `CheckService.ts:288` and `CheckPrinter.vue:1083` | Replace both with `AllocateChequeNumber(chequeBookId)` |
 | `validateMICRLineLength` | `utils/validation.ts:273-283` | Use the routing parameter; parameterise per profile/country |
 | Amount-to-words | **5 implementations** — `utils/formatting.ts:130`, `CheckPrinter.vue:994`, `stores/check.ts:42`, `check-preview.ts:441`, `printable-check-page.ts:215` | One locale-parameterised core function; HTML-free output |
 | `amountToWords` performance | `utils/formatting.ts:130` | Instantiates `new ToWords(...)` on every call — memoise (contrast `getCurrencyFormatter`) |
@@ -1626,7 +1626,7 @@ Consolidated, severity-ordered. "Evidence" is a verified `path:line`.
 | C10 | **3 of 4 MICR renderers emit glyphs absent from the bundled font** (U+2446/U+2448 → gid 0) | `CheckRenderer.vue:269-270`; `check-preview.ts:328`; `printable-check-page.ts:776`; font `cmap` parsed |
 | C11 | **Published packages have no MICR font at all**; request undefined `'MICR'` family, fall back to Courier | `printable-check-page.ts:474`; `check-preview.ts:61`; no `@font-face` in `packages/` |
 | C12 | **MICR pitch ≈30% outside ANSI X9.27**; font height:pitch ratio 0.93 vs spec 0.667 | computed from `hmtx`/`glyf`; §9.5 — *physical confirmation* **UNKNOWN** |
-| C13 | **Cheque numbering is global, not per cheque book** | `CheckService.ts:270-283` `Math.max` over all cheques |
+| C13 | **Cheque numbering is global, not per cheque book** | `CheckService.ts:288-304` `Math.max` over all cheques |
 | C14 | **No `ChequeBook` entity** — nowhere to scope a sequence or bind stock | 0 hits |
 | C15 | **0 of 16 target domain entities exist** | §3.1 |
 | C16 | **Two divergent, incompatible domain models**; app does not depend on core | §3.1; zero `@printchecks/core` references in `printchecks/` |
@@ -1641,9 +1641,9 @@ Consolidated, severity-ordered. "Evidence" is a verified `path:line`.
 
 | # | Conflict | Evidence |
 |---|---|---|
-| H1 | Two disagreeing cheque-number generators | `CheckService.ts:270` vs `CheckPrinter.vue:1083-1097` |
+| H1 | Two disagreeing cheque-number generators | `CheckService.ts:288` vs `CheckPrinter.vue:1083-1097` |
 | H2 | No cheque-number uniqueness enforcement | `CheckService.createCheck():41-73` |
-| H3 | `startingCheckNumber` exists but is ignored by the generator | `types/bankAccount.ts:14` |
+| H3 | `startingCheckNumber` exists but is ignored by the generator | `types/bankAccount.ts:13` |
 | H4 | IDs are time-derived, not UUIDs; `.substr` deprecated; collision-prone | `models/Check.ts:298`; `stores/history.ts:165` |
 | H5 | Status is a mutable field — prior states lost | `models/Check.ts:186,197` |
 | H6 | `'ready'` only in dead code; `'cancelled'` never assigned | `stores/check.ts:199`; `models/Check.ts:8` |
@@ -1658,7 +1658,7 @@ Consolidated, severity-ordered. "Evidence" is a verified `path:line`.
 | H15 | Encryption password stored plaintext in `sessionStorage` | `App.vue:39` |
 | H16 | Encryption opt-in and off by default; auto-disabled on missing test key | `services/secureStorage.ts:33`; `App.vue:20-24` |
 | H17 | "No network / 100% local" claim contradicted by CDN dependencies | `index.html:9,14-16,22` vs `README.md` |
-| H18 | No Bank entity; bank and account conflated in one model | `BankAccountModal.vue:20`; `models/Check.ts:22` |
+| H18 | No Bank entity; bank and account conflated in one model | `BankAccountModal.vue:20`; `models/Check.ts:19` |
 | H19 | Template bound to bank account as a cosmetic preset | `types/bankAccount.ts:17`; `CheckPrinter.vue:1726` |
 | H20 | Hardcoded position tables duplicated 4× and hand-synchronised | `CheckRenderer.vue:388-401,459-471`; `CheckPrinter.vue:1110,1176` |
 | H21 | Preview and print canvases disagree (1200×500 vs 1200×490, logo bounds vs 450) | `CheckPrinter.vue:2131-2133`; `CheckRenderer.vue:370-371,441-448` |
