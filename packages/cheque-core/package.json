@@ -4,34 +4,34 @@
   "private": true,
   "description": "Pure, framework-agnostic cheque domain core: Bank / BankAccount / ChequeBook / Cheque, cheque-number sequence engine, Money, lifecycle state machine, repository ports and application use cases.",
   "type": "module",
-  "main": "./dist/index.js",
-  "module": "./dist/index.mjs",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js"
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
     },
     "./domain": {
       "types": "./dist/domain/index.d.ts",
-      "import": "./dist/domain/index.mjs",
-      "require": "./dist/domain/index.js"
+      "import": "./dist/domain/index.js",
+      "require": "./dist/domain/index.cjs"
     },
     "./ports": {
       "types": "./dist/ports/index.d.ts",
-      "import": "./dist/ports/index.mjs",
-      "require": "./dist/ports/index.js"
+      "import": "./dist/ports/index.js",
+      "require": "./dist/ports/index.cjs"
     },
     "./application": {
       "types": "./dist/application/index.d.ts",
-      "import": "./dist/application/index.mjs",
-      "require": "./dist/application/index.js"
+      "import": "./dist/application/index.js",
+      "require": "./dist/application/index.cjs"
     },
     "./infrastructure": {
       "types": "./dist/infrastructure/index.d.ts",
-      "import": "./dist/infrastructure/index.mjs",
-      "require": "./dist/infrastructure/index.js"
+      "import": "./dist/infrastructure/index.js",
+      "require": "./dist/infrastructure/index.cjs"
     }
   },
   "files": [
