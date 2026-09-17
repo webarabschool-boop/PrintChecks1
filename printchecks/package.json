@@ -17,6 +17,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@printchecks/cheque-core": "workspace:*",
     "pinia": "^2.1.3",
     "print-js": "^1.6.0",
     "printjs": "^1.1.0",

@@ -25,6 +25,22 @@ const METADATA_KEYS = ['encryption_enabled', 'encryption_test', 'encryption_migr
 class SecureStorage {
   private password: string | null = null
   private encryptionEnabled = false
+  // Registered key prefixes that must follow the same encryption policy as SENSITIVE_KEYS.
+  // Used by the cheque-domain persistence adapter (Phase 1) so every record under the
+  // versioned domain namespace is encrypted whenever app encryption is active.
+  private sensitiveKeyPrefixes: string[] = []
+
+  /**
+   * Register key prefixes whose stored values must follow the sensitive-data encryption
+   * policy. Additive and idempotent; does not change any existing key's classification.
+   */
+  registerSensitiveKeyPrefixes(...prefixes: string[]) {
+    for (const prefix of prefixes) {
+      if (typeof prefix === 'string' && prefix.length > 0 && !this.sensitiveKeyPrefixes.includes(prefix)) {
+        this.sensitiveKeyPrefixes.push(prefix)
+      }
+    }
+  }
 
   /**
    * Initialize the secure storage with a password
@@ -47,7 +63,9 @@ class SecureStorage {
    * Check if a key should be encrypted
    */
   private shouldEncrypt(key: string): boolean {
-    return SENSITIVE_KEYS.includes(key) && !METADATA_KEYS.includes(key)
+    if (METADATA_KEYS.includes(key)) return false
+    if (SENSITIVE_KEYS.includes(key)) return true
+    return this.sensitiveKeyPrefixes.some((prefix) => key.startsWith(prefix))
   }
 
   /**

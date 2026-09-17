@@ -1606,6 +1606,100 @@ application layer, and it currently **cannot render MICR at all** (§9.5) — it
 
 ---
 
+## 16. Phase 1 — Application boundary and domain consolidation (implemented)
+
+Phase 1 makes `@printchecks/cheque-core` the single source of truth for cheque-domain
+rules inside the Vue application, integrated gradually through ONE explicit application
+boundary — not a rewrite.
+
+### 16.1 The boundary
+
+    Vue UI / Pinia stores
+      │
+      ▼
+    printchecks/src/services/cheque-domain/   ← the ONLY module in the app that may
+      │                                         import @printchecks/cheque-core
+      ▼                                         (root entry only)
+    @printchecks/cheque-core                  ← canonical domain rules
+      │
+      ▼
+    SecureStorageRecordStore (RecordStore port)
+      │
+      ▼
+    printchecks/src/services/secureStorage.ts → localStorage (encryption preserved)
+
+Enforcement is structural, not conventional:
+
+- `__tests__/architecture-boundary.test.ts` fails CI if any file outside
+  `services/cheque-domain/**` imports `@printchecks/cheque-core`, if the boundary uses
+  a deep (non-root) import of the core, if any boundary module imports a UI layer
+  (components, views, stores, router, vue, pinia), or if any boundary statement parses
+  a cheque number numerically.
+- The core's own layer guard (`packages/cheque-core/src/__tests__/architecture-layers.test.ts`)
+  continues to keep the core's internal layering intact.
+
+### 16.2 Domain ownership
+
+The canonical chain is `Bank → BankAccount → ChequeBook → Cheque`, always by identity
+(never by free-text name). The `ChequeBook` is the aggregate that owns cheque-number
+sequencing; there is no global cheque-number counter anywhere. A cheque number is an
+exact STRING — prefixes, leading zeros and punctuated manual identifiers such as
+`0012/2026-SB` survive storage, display and export untouched; duplicate detection is
+scoped to the owning book, so the same number may legitimately exist in two books.
+Cancelled/voided numbers are never reused (the cursor only ever moves forward).
+
+New domain records are identified with the core's `CryptoIdGenerator`
+(`chq_…`/`cbk_…` UUIDs). `Date.now()+Math.random()` ids remain only in the old UI-level
+legacy records, which are not domain records.
+
+### 16.3 Migration and compatibility approach
+
+Legacy collections (`bankAccounts`, `checkList`) stay exactly where and how they are —
+same keys, same blobs, same encryption policy. Migration MIRRORS them into a versioned
+shadow namespace, `printchecks:cheque:v1:`, one record per key. It is:
+
+- **Deterministic** — domain ids derive from legacy identity
+  (`bank:legacy:<name>`, `bankAccount:legacy:<id>`, `chequeBook:legacy:<account id>`,
+  `cheque:legacy:<check id>`); no clock, no randomness on the mapping path.
+- **Idempotent** — re-runs reproduce byte-identical records (verified: every entity
+  class reports `unchanged` on replay; clear → re-migrate yields identical keys).
+- **Non-destructive** — legacy keys are read, never written; the legacy
+  `nextCheckNumber` computed and `CheckPrinter.vue` are untouched and remain
+  authoritative for the current UI flows.
+- **Reversible** — `clearDomainData()` removes exactly the domain namespace.
+- **Honest** — unmappable legacy records (missing bank name / account number / payee /
+  unparseable amount or date) keep the original intact and are reported with reasons;
+  nothing is fabricated. Records carry no currency in the legacy model, so migrated
+  Money uses ISO 4217 `XXX` ("no currency") — an explicit sentinel, not a guess.
+  Legacy `isPrinted`/`isVoid` replay as `issued → printed → cancelled`, a legal path
+  in the cheque lifecycle at every step.
+
+Consumers migrate gradually: the check store's save path mirrors each saved check into
+the domain store (best-effort, never failing the legacy save); full-snapshot migration
+runs on demand and safe repeatedly.
+
+### 16.4 Persistence and encryption
+
+The boundary adapts the existing `secureStorage` service to the core `RecordStore`
+port. Encryption policy stays owned by that service: it gained an additive
+`registerSensitiveKeyPrefixes()` extension, and the adapter registers the domain
+namespace — so domain records are encrypted at rest exactly when the app's encryption
+subsystem is enabled, and can never silently be stored unencrypted. No second storage
+system, no second encryption implementation.
+
+### 16.5 Deferred work (explicitly NOT part of Phase 1)
+
+- Template Engine, Printing Engine, physical geometry (mm/DPI), printer profiles,
+  calibration, MICR, overlay printing, bank-specific layouts — §7/§8 remain the plan.
+- Migrating the UI-level legacy `generateId()` (`Date.now()+Math.random()`) to
+  `CryptoIdGenerator`; it identifies UI records, not domain records.
+- Routing numbers / stock references: no domain schema yet; legacy records remain the
+  untouched source of truth.
+- Currency selection for NEW records: the boundary requires an explicit currency; the
+  UI will choose once cheque-book registration lands.
+- Incrementing check numbers from the domain in the editing flow: kept on the legacy
+  computed until ChequeBook registration UI exists.
+
 ## Appendix A — Architecture conflict register
 
 Consolidated, severity-ordered. "Evidence" is a verified `path:line`.
