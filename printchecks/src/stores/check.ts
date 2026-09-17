@@ -194,6 +194,13 @@ export const useCheckStore = defineStore('useCheckStore', () => {
 
       await secureStorage.set('checkList', JSON.stringify(checkList))
 
+      // Phase 1 (cheque-domain boundary): mirror the saved check into the canonical
+      // domain store. The legacy `checkList` stays authoritative; the mirror is
+      // best-effort and must never make a successful save fail. The determination of
+      // cheque numbers is NOT migrated yet — that still belongs to the legacy
+      // nextCheckNumber flow, kept intact while consumers transition.
+      await mirrorCheckToChequeDomain(currentCheck.value)
+
       lastSaved.value = new Date()
       hasUnsavedChanges.value = false
       status.value = 'ready'
@@ -278,6 +285,22 @@ export const useCheckStore = defineStore('useCheckStore', () => {
 
   function generateId(): string {
     return Date.now().toString(36) + Math.random().toString(36).substr(2)
+  }
+
+  /**
+   * Phase 1 bridge: mirror the persisted check into `@printchecks/cheque-core` storage
+   * via the cheque-domain application boundary. Fully self-contained failure handling:
+   * any error (including a missing domain store) is logged and swallowed — the legacy
+   * save path must not observe it. The dynamic import keeps this store's module graph
+   * identical for tests that mock secureStorage before the boundary is ever reached.
+   */
+  async function mirrorCheckToChequeDomain(check: CheckData): Promise<void> {
+    try {
+      const { recordSavedLegacyCheck } = await import('@/services/cheque-domain')
+      await recordSavedLegacyCheck(check)
+    } catch (error) {
+      console.warn('[cheque-domain] domain mirror skipped:', error)
+    }
   }
 
   // Template management
