@@ -1,0 +1,90 @@
+{
+  "name": "@printchecks/cheque-printing",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Framework-agnostic template and printing engine for pre-printed bank cheque stock: physical mm geometry, bank-specific templates, deterministic layout, printer profiles, independent calibration, print-job lifecycle with version + layout-hash pinning, and a data-only print output that never reproduces the bank's artwork.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./template": {
+      "types": "./dist/template/index.d.ts",
+      "import": "./dist/template/index.js",
+      "require": "./dist/template/index.cjs"
+    },
+    "./printdata": {
+      "types": "./dist/printdata/index.d.ts",
+      "import": "./dist/printdata/index.js",
+      "require": "./dist/printdata/index.cjs"
+    },
+    "./layout": {
+      "types": "./dist/layout/index.d.ts",
+      "import": "./dist/layout/index.js",
+      "require": "./dist/layout/index.cjs"
+    },
+    "./printer": {
+      "types": "./dist/printer/index.d.ts",
+      "import": "./dist/printer/index.js",
+      "require": "./dist/printer/index.cjs"
+    },
+    "./printing": {
+      "types": "./dist/printing/index.d.ts",
+      "import": "./dist/printing/index.js",
+      "require": "./dist/printing/index.cjs"
+    },
+    "./ports": {
+      "types": "./dist/ports/index.d.ts",
+      "import": "./dist/ports/index.js",
+      "require": "./dist/ports/index.cjs"
+    },
+    "./application": {
+      "types": "./dist/application/index.d.ts",
+      "import": "./dist/application/index.js",
+      "require": "./dist/application/index.cjs"
+    },
+    "./infrastructure": {
+      "types": "./dist/infrastructure/index.d.ts",
+      "import": "./dist/infrastructure/index.js",
+      "require": "./dist/infrastructure/index.cjs"
+    },
+    "./browser": {
+      "types": "./dist/browser/index.d.ts",
+      "import": "./dist/browser/index.js",
+      "require": "./dist/browser/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "cheque",
+    "check",
+    "printing",
+    "template",
+    "millimetre",
+    "calibration",
+    "rtl",
+    "printchecks"
+  ],
+  "license": "MIT",
+  "sideEffects": false,
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.4",
+    "vitest": "^3.0.0"
+  }
+}
