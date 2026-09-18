@@ -1836,3 +1836,216 @@ outputs produced during verification were removed.
 6. Whether the `@printchecks/*` npm scope is owned by this project.
 7. Physical print behaviour under specific browser/driver scaling (Safari `@page`, Firefox `100vh` in print).
 8. Whether `packages/vue`'s `main: ./dist/index.cjs` matches its actual tsup output filenames.
+
+---
+
+## 17. Phase 2 — Template & printing engine (implemented)
+
+Phase 2 introduces `@printchecks/cheque-printing`: the template model, the deterministic layout
+engine, printer profiles with calibration, the safety gate, the print renderer, print-job records and
+their audit trail. It is the engine the application will drive; it is not a screen. The Template
+Designer UI, the application-side service boundary and the router entry land on top of it in the
+next commit series and are listed as pending in §17.11.
+
+The engine exists for one scenario: a printed sheet of a bank's pre-printed cheque stock has to land
+within a fraction of a millimetre of the caption the bank printed, on a printer nobody controls, and
+the record of what was printed has to survive an audit years later.
+
+### 17.1 Package and boundary
+
+| Subpath | Contents |
+| --- | --- |
+| `.` | everything below, as one barrel |
+| `./template` | `BankChequeTemplate`, fields, validation, registry, built-in stocks |
+| `./printdata` | `ChequePrintData` validation/normalisation, bidi analysis, value formats |
+| `./layout` | layout engine, text measurement, wrapping, preview mapping |
+| `./printer` | profiles, calibration, the transform, the registration test page |
+| `./printing` | print jobs, safety assessment, HTML rendering, audit records |
+| `./ports` | `PrintTransport`, `PrintingRecordStore`, `AmountInWordsConverter` |
+| `./application` | `ChequePrintingService` — the façade the app is expected to use |
+| `./infrastructure` | record-store-backed repositories, in-memory store |
+| `./browser` | `IframePrintTransport` — the only DOM-touching module |
+
+The package has **no runtime dependencies** and is private to the workspace. It deliberately does not
+import `@printchecks/cheque-core`: the cheque lifecycle, numbering and money belong to Phase 1, and
+importing them here would make the printing engine untestable outside the app graph. The
+four-method `PrintingRecordStore` port is re-declared structurally, so the same encrypted
+`localStorage` adapter serves both packages — a shared seam, not a duplicated model. Layer direction
+is enforced by `src/__tests__/architecture.test.ts`: the engine never imports the host, `src/browser`
+is the only module allowed to name a DOM global, and `window.print()` appears nowhere in the package.
+
+### 17.2 Millimetres are the source of truth
+
+Template geometry is stored in millimetres with `unit: 'mm'`, rounded to `MM_DECIMALS = 3` at
+construction, frozen, and validated against extents between 0.5 mm and 5000 mm. Typography carries
+point sizes, because that is the unit a bank typesetter uses; conversion to CSS happens once, in
+`src/html/document.ts`. Validation compares with `MM_TOLERANCE = 0.05` and admits sub-micron
+(`1e-6 mm`) slack on extents so that a rounded edge is never reported as overhanging the sheet.
+
+The printed page declares `@page { size: 210mm 85mm; margin: 0mm; }` and positions every run with
+absolute millimetre offsets. Nothing scales: no viewport units, no `transform: scale()`, no 96-dpi
+assumption in the print path. Unit conversions live in one file (`src/geometry/units.ts`) and are
+used in two directions with different purposes: millimetres become CSS lengths for the printer, and
+the only millimetre-to-pixel site is `src/layout/preview.ts`, which exists so a screen can show a
+sheet at a zoom level. The print path never calls it, and the renderer is checked for that.
+
+### 17.3 Template rules
+
+| Rule | Mechanism | Tests |
+| --- | --- | --- |
+| T1 — a field is a box on the stock, in mm | `createTemplateField` normalises and rounds; `fieldRectOnSheet` resolves body-relative to sheet coordinates | `template/__tests__/template-validation.test.ts` |
+| T2 — the field mapping is explicit | `source` names a `ChequePrintData` property, or `custom` + `customKey`; `DEFAULT_SOURCE_BY_KEY` covers canonical keys only | `layout/__tests__/engine.test.ts` |
+| T3 — pre-printed captions are not reprinted | `findPreprintedSuppression` drops the run and records `FIELD_SUPPRESSED_BY_PREPRINTED`; a `role: 'value'` field is never suppressed | `template/__tests__/template-validation.test.ts` |
+| T4 — a published version is immutable | `nextTemplateVersion` derives a new version and throws on a change that alters nothing; `TemplateRegistry.publish` is the only write path, and it validates | `template/__tests__/template-versioning.test.ts` |
+| T5 — preview-only guidance never prints | a field with `isPrinted: false` (signature box, MICR band, guides) lands in `layout.guides`, and the renderer consumes only `layout.runs` | `printing/__tests__/render.test.ts`, `architecture.test.ts` |
+| T6 — the reference artwork is a screen artefact | the bank image and `checkbg`-style backgrounds are never part of a template's print output; `findForbiddenMarkup` refuses `<img>`, `url(`, `background-image:`, `@import` and artwork file names in the final HTML | `printing/__tests__/render.test.ts` |
+| T7 — printer hints are hints | `printerConfigHint` accepts only the documented keys; anything else is a validation error, so a template cannot smuggle a driver setting | `template/__tests__/template-validation.test.ts` |
+
+`templateHash` covers content and excludes timestamps; `computeLayoutIdentity` additionally excludes
+`version`, so a re-numbering that changes nothing geometric does not create a new print target. Four
+built-in stocks ship (`NBE` personal English and Arabic, an NBE three-part voucher, `CIB` corporate),
+all of which validate with zero errors and print no MICR.
+
+### 17.4 Layout generation is deterministic
+
+`buildPrintLayout({ template, data, options })` runs in a fixed order: pre-printed suppression →
+source resolution → formatting (dates, amount, padding, words) → uppercasing → `maxChars` →
+measurement → overflow policy → bidi isolation → field box on the sheet → bounds and collision
+checks. The result is frozen and carries `layoutHash = hashCanonical({templateId, templateVersion,
+templateHash, paper, runs, direction, locale})` — the identity a print record pins.
+
+Text width is modelled, not measured against a font: per-family average factors (serif 0.50, sans
+0.52, mono 0.60, Arabic 0.44, CJK 1.00 of the em), plus weight and italic adjustments. That is enough
+to decide fit reproducibly on any machine, which is what the record has to be able to re-derive. The
+overflow policies are `shrink` (down to a 0.6 floor, then clip), `wrap`, `clip` and `error`. Out-of
+bounds and overlaps are errors (`FIELD_OUTSIDE_PAPER`, `FIELD_COLLISION`, tolerance 0.25 mm); empty or
+truncated values are warnings — and emptiness is judged on the text that would actually land on the
+paper, so a words line rendered from the amount is never "empty".
+
+### 17.5 Profiles, calibration and the test page
+
+A printer profile is a device description (feed, orientation, dpi, nominal offsets, unprintable
+margins defaulting to 4.2 mm) and is never a copy of a template. Calibration is stored per
+`(profileId, templateId)` pair under `calibrationKey`, because a sheet that fits one stock does not
+fit another. Neither mutates a template, and no calibration is ever folded into `templateHash`.
+
+The transform applied to every run is
+
+```
+final = ((templateMm + profileOffset) * profileScale + calibrationOffset) * calibrationScale
+```
+
+with skew as `y -= tan(skewDeg) · (x − skewPivotXmm)` and an exact inverse, so a measurement taken
+off a printed page can be undone when the operator measures the same marks again. `deriveCalibration`
+computes mean offset, scale from the ratio of measured to expected spans beyond 20 mm, and skew from
+the vertical-residual gradient across at least 50 mm; fewer than three marks yields a `draft`, which
+the safety gate surfaces as a warning rather than silently trusting. Implausible corrections
+(>4 mm offset, >2 % scale error, >0.5° skew by default) are refused on write unless the operator
+explicitly asks to keep them while diagnosing a fault.
+
+`buildRegistrationTestPage` emits 10 mm rulers, R1–R5 registration marks at an 8 mm inset plus the
+centre, and a crosshair at every printed field's box centre. `expectedXMm/expectedYMm` is where the
+template wants the mark; `placedXMm/placedYMm` carries the transform, so the printer's own drift
+cancels it on paper. The page states plainly whether it carries no transform, only a profile's
+nominal offsets, or a calibration — a starting guess must not read as a measurement.
+
+### 17.6 The print flow and the safety gate
+
+`ChequePrintingService` exposes the flow the UI needs: `preview → stage → authorise → send →
+complete`, with `cancel` before the send and `reprint` after it. `stage` builds the layout, renders
+the document and assesses safety, holding the result in memory; nothing is persisted and nothing is
+printed until `authorise`. A blocked report at staging is refused before a job exists, and the
+refusal is audited (`safety.blocked`).
+
+`assessPrintSafety` returns `{ ok, blocked, issues, errors, warnings, acknowledgementsRequired,
+requiresConfirmation, nonce, summary }`. The nonce is `hashCanonical` over the template id and hash,
+the layout hash, the profile id, the calibration fingerprint and the issue list, so it identifies the
+exact situation the operator read. `assertSafetyCleared` requires a confirmation naming an actor that
+covers every acknowledged code, and refuses a confirmation whose nonce belongs to another report
+(`SAFETY_CONFIRMATION_STALE`). At authorisation the report is recomputed: if it now blocks, the print
+is refused on those grounds before any confirmation is considered; if only the numbers moved (a
+re-measured calibration, a re-rendered byte count) while the issue set is identical, the confirmation
+is rebound rather than rejected. A changed issue set is `SAFETY_REPORT_CHANGED`.
+
+Policy knobs are data, not code paths: `requireCalibration`, `blockOnWarnings`,
+`allowInactiveTemplate`, `calibrationStaleAfterDays`, `highAmountDecimal`, `pinTemplateHash`. Device
+checks that no other layer can see also live here: a stock with a MICR band always yields
+`MICR_TONER_DECLARED` or `MICR_TONER_UNAVAILABLE` (a warning — this phase emits no encoder, whatever
+the toner), and a non-square dpi is a warning until the axes differ by more than 15 %, where it
+becomes an error, because mm geometry is not rescaled by DPI and a large mismatch is why a calibration
+would never converge.
+
+Reprinting goes through `reprint(jobId, actorId, reason)`: a blank reason is refused, the pinned
+version is re-resolved rather than "the newest one", and the stored layout is re-rendered with the
+same options as the first attempt, so `document.hash` matches across the two records and an auditor
+can see that the same sheet was sent twice.
+
+### 17.7 Rendering and transport
+
+`renderPrintDocument` emits one `<div class="pc-run" data-field data-role dir lang>` per non-blank
+line, positioned in millimetres, `white-space: pre`, black on white, with no script, no external
+resource and no background. The finished string is scanned for forbidden markup and refuses to return
+(`PRINT_DOCUMENT_NOT_DATA_ONLY`, `EMPTY_PRINT_DOCUMENT`) rather than hand a transport something
+suspicious. Guides, reference images and preview styling are structurally absent — the renderer reads
+`layout.runs`, never `layout.guides`.
+
+`IframePrintTransport` is the browser implementation: it writes the document into a same-origin
+iframe it created and calls print on that frame's window. It is not `window.print()` — printing the
+top-level page would print the dashboard — and the ban is tested. It reports `outcomeObserved:
+false`, because no browser tells a page that paper came out of a printer; `job.sent` is therefore a
+claim about hand-off, and only an explicit `complete` (or a transport that can see its queue) makes a
+record `completed`.
+
+### 17.8 Records: pinning and the audit chain
+
+Every job carries the pin that makes it re-printable: `templateId`, `templateVersion`,
+`templateHash`, `layoutHash`, `printerProfileId`, `calibrationId`, `calibrationFingerprint`, plus the
+document's byte count, run count and hash, and a `recordHash` over the whole record.
+`verifyJobRecord` re-derives those, so a stored record that was edited — a layout swapped for another
+cheque's, a status advanced by hand, an authoriser's name changed — reports the mismatch instead of
+looking authoritative.
+
+The audit trail is append-only and hash-linked: `appendAuditRecord(prev, input)` assigns a sequence
+number, links `previousHash` (or `GENESIS_HASH`), stores context verbatim, masks sensitive values
+(account numbers and IBANs keep their last four digits, payee names keep two) and stamps
+`integrityHash`. `verifyAuditChain` distinguishes an edited record from a deleted one from a
+reordered one, and names the first broken index. Print attempts, refusals, acknowledgements,
+reprints, template publications and calibrations all land in it.
+
+### 17.9 RTL, LTR and mixed text
+
+Character classes drive base direction (`detectBaseDirection`, treating ASCII digits and punctuation
+as neutral, Arabic letters as strong RTL), and each field may override with `direction: 'rtl' |
+'ltr' | 'auto'`. Runs are wrapped in Unicode isolates (`applyBidiIsolation`) so a Latin payee name
+inside an Arabic cheque cannot drag the surrounding digits out of order; control characters are
+stripped before measurement, and `convertDigits` switches between Western and Arabic-Indic digits on
+request. Digit-only fields (cheque number, amount, dates) stay `'ltr'` inside an RTL template — the
+built-in Arabic stock relies on exactly that.
+
+### 17.10 Amount in words
+
+The engine does not own number-to-words. It consumes the existing `AmountInWordsConverter` port, which
+the application wires to the Phase 1 adapter, and `formatAmountInWords` requests the words in the
+field's transform. When no converter is injected the field fails with `FIELD_WORDS_RENDER_FAILED` and
+the layout blocks: an invented or blank words line on a cheque is worse than a refusal.
+
+### 17.11 Explicitly not in this phase
+
+- **No MICR.** No encoder, no font embedding, no toner claims. MICR-flagged fields in a template are
+  preview-only, and printing one is a validation error (§9).
+- **No Template Designer UI yet.** `TemplateDesignerView`, the preview canvas, the field table, the
+  profile panel and the confirmation dialog land next, consuming `preview`, `inspectTemplate`,
+  `generateTestPage`, `calibrateFromMeasurements` and `stage`/`authorise` — no component may lay out
+  a cheque in CSS pixels or compute a position the engine did not produce.
+- **No changes to the legacy `CheckPrinter.vue`**, which remains the current print path until the
+  designer UI replaces it.
+- No print queue backend, no driver enumeration, no physical-device probing.
+
+### 17.12 Verification
+
+`pnpm install --frozen-lockfile`, `pnpm run build`, `pnpm run type-check`, `pnpm run lint` and
+`pnpm test` pass; the root test script builds this package first, because
+`src/__tests__/package-exports.test.ts` resolves all ten subpaths through the real exports map and
+imports the built ESM and CJS artifacts in bare Node — including a smoke test that stages a cheque
+and prints a test page with no DOM present. The engine suite is 454 tests across 19 files; every
+other package's tests are unchanged (297 + 660 + 123 + 167 + 448), for 2,149 in total.
